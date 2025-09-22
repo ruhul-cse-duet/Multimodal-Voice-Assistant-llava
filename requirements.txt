@@ -1,0 +1,15 @@
+streamlit
+pydub==0.25.1
+streamlit-audiorecorder==0.0.4
+audio-recorder-streamlit==0.0.8
+torch==2.1.0
+transformers==4.37.2
+bitsandbytes==0.41.3
+accelerate==0.25.0
+openai-whisper
+gradio
+gTTS
+Pillow==10.1.0
+nltk==3.8.1
+numpy==1.24.3
+requests==2.31.0
