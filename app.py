@@ -8,12 +8,28 @@ from pathlib import Path
 from typing import Optional
 from io import BytesIO
 
+# Set PyTorch CUDA memory management for low-memory GPUs
+# This helps prevent OOM errors on GPUs with limited memory
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # Import our custom components
 from components.multimodal_processor import MultimodalProcessor
 from config.settings import UI_CONFIG
 from utils.logger import setup_logger
-from audio_recorder_streamlit import audio_recorder
-from pydub import AudioSegment
+try:
+    from streamlit_audiorecorder import st_audiorec
+    AUDIO_RECORDER_AVAILABLE = True
+    USE_LEGACY_RECORDER = False
+except ImportError:
+    try:
+        from audio_recorder_streamlit import audio_recorder
+        AUDIO_RECORDER_AVAILABLE = True
+        USE_LEGACY_RECORDER = True
+    except ImportError:
+        AUDIO_RECORDER_AVAILABLE = False
+        USE_LEGACY_RECORDER = False
+        st_audiorec = None
+        audio_recorder = None
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -62,14 +78,79 @@ def initialize_session_state():
         st.session_state.processor = None
     if 'processing_complete' not in st.session_state:
         st.session_state.processing_complete = False
+    if 'recorded_audio_path' not in st.session_state:
+        st.session_state.recorded_audio_path = None
+    if 'recording_status' not in st.session_state:
+        st.session_state.recording_status = "Ready to record"
+    if 'text_input' not in st.session_state:
+        st.session_state.text_input = ""
+
+def check_gpu_status():
+    """Check and display GPU status"""
+    try:
+        import torch
+        cuda_available = torch.cuda.is_available()
+        if cuda_available:
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            return True, f"✅ GPU Available: {gpu_name} ({gpu_memory:.2f} GB)"
+        else:
+            return False, "❌ GPU Not Available - Using CPU"
+    except Exception as e:
+        return False, f"⚠️ GPU Check Failed: {e}"
 
 def load_processor():
     """Load the multimodal processor"""
     if st.session_state.processor is None:
+        # Check GPU status first
+        gpu_available, gpu_status = check_gpu_status()
+        if gpu_available:
+            st.info(gpu_status)
+            # Check GPU memory and warn if low
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                    if gpu_memory < 4.0:
+                        st.warning(f"⚠️ Low GPU memory ({gpu_memory:.2f} GB). The app will automatically use CPU if GPU runs out of memory.")
+            except:
+                pass
+        else:
+            st.warning(gpu_status)
+        
         with st.spinner("Loading AI models... This may take a moment."):
             try:
                 st.session_state.processor = MultimodalProcessor()
                 st.success("Models loaded successfully!")
+                
+                # Display device info after loading
+                if hasattr(st.session_state.processor, 'image_processor'):
+                    img_device = st.session_state.processor.image_processor.device
+                    if img_device == "cuda":
+                        st.success(f"🖼️ Image Model: Running on GPU")
+                    else:
+                        st.info(f"🖼️ Image Model: Running on CPU (GPU memory insufficient or not available)")
+                
+                if hasattr(st.session_state.processor, 'audio_processor'):
+                    audio_device = st.session_state.processor.audio_processor.device
+                    if audio_device == "cuda":
+                        st.success(f"🎤 Audio Model: Running on GPU")
+                    else:
+                        st.info(f"🎤 Audio Model: Running on CPU")
+                        
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "out of memory" in error_msg.lower() or "cuda" in error_msg.lower():
+                    st.error("❌ GPU ran out of memory. The app will try to use CPU instead.")
+                    st.info("💡 **Tips to reduce memory usage:**\n"
+                           "- Close other GPU-intensive applications\n"
+                           "- Restart the app to clear GPU memory\n"
+                           "- Consider using CPU mode if GPU memory is consistently insufficient")
+                    logger.error(f"GPU OOM error: {e}")
+                else:
+                    st.error(f"Failed to load models: {e}")
+                    logger.error(f"Failed to load processor: {e}")
+                return False
             except Exception as e:
                 st.error(f"Failed to load models: {e}")
                 logger.error(f"Failed to load processor: {e}")
@@ -104,24 +185,36 @@ def main():
     
     # Header
     st.markdown('<h1 class="main-header">🎤 Multimodal Voice Assistant</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Upload an image and interact via voice input with AI-powered responses</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Upload an image and interact via voice, text, or both with AI-powered responses</p>', unsafe_allow_html=True)
     
     # Sidebar
     with st.sidebar:
         st.header("📋 Instructions")
         st.markdown("""
-        1. **Upload an Image**: Choose an image file (JPG, PNG, etc.)
-        2. **Record Audio**: Use the microphone to ask questions about the image
-        3. **Get Response**: The AI will analyze both and provide a spoken response
+        1. **Upload an Image** (Optional): Choose an image file (JPG, PNG, etc.)
+        2. **Provide Input**: 
+           - 🎤 Record or upload audio
+           - ✍️ Type your question/prompt
+           - Or use both!
+        3. **Get Response**: The AI will analyze and provide a spoken response
         
         **Features:**
         - 🖼️ Image analysis with LLaVA
         - 🎤 Speech-to-text with Whisper
+        - ✍️ Text input support
         - 🔊 Text-to-speech responses
         - 🤖 AI-powered multimodal understanding
         """)
         
         st.header("⚙️ Settings")
+        
+        # Display GPU status
+        gpu_available, gpu_status = check_gpu_status()
+        if gpu_available:
+            st.success(gpu_status)
+        else:
+            st.warning(gpu_status)
+        
         st.info("Models will be loaded automatically when you first use the app.")
     
     # Main content area
@@ -137,7 +230,7 @@ def main():
         )
         # Preview uploaded image
         if uploaded_image is not None:
-            st.image(uploaded_image, caption="Input Image", use_column_width=True)
+            st.image(uploaded_image, caption="Input Image", width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
@@ -151,31 +244,107 @@ def main():
         
         # Alternative: Record audio directly
         st.subheader("🎙️ Or Record Live")
-        recorded_bytes = audio_recorder(text="🎤 Click to Record", recording_color="#e74c3c", neutral_color="#2ecc71", icon_name="microphone", icon_size="2x")
-
-        recorded_audio_path = None
-        if recorded_bytes:
-            # Save recorded audio bytes to temp WAV file
-            temp_dir = Path(tempfile.gettempdir()) / "multimodal_assistant"
-            temp_dir.mkdir(exist_ok=True)
-            recorded_audio_path = temp_dir / "recorded_audio.wav"
+        
+        if not AUDIO_RECORDER_AVAILABLE:
+            st.error("⚠️ Audio recorder not available. Please install: `pip install streamlit-audiorecorder`")
+        else:
             try:
-                audio_seg = AudioSegment.from_file(BytesIO(recorded_bytes), format="wav")
-                audio_seg.export(recorded_audio_path, format="wav")
-                st.success(f"Recorded audio saved: {recorded_audio_path.name}")
-                st.session_state["recorded_audio_path"] = str(recorded_audio_path)
-            except Exception:
-                # Fallback: write bytes directly
-                with open(recorded_audio_path, "wb") as f:
-                    f.write(recorded_bytes)
-                st.success(f"Recorded audio saved: {recorded_audio_path.name}")
-                st.session_state["recorded_audio_path"] = str(recorded_audio_path)
+                if USE_LEGACY_RECORDER:
+                    # Use legacy audio_recorder_streamlit
+                    recorded_bytes = audio_recorder(
+                        text="🎤 Click to Record",
+                        recording_color="#e74c3c",
+                        neutral_color="#2ecc71",
+                        icon_name="microphone",
+                        icon_size="2x",
+                        sample_rate=44100,
+                        key="live_audio_recorder",
+                    )
+                    
+                    if recorded_bytes:
+                        # Save recorded audio bytes to temp WAV file
+                        temp_dir = Path(tempfile.gettempdir()) / "multimodal_assistant"
+                        temp_dir.mkdir(exist_ok=True)
+                        recorded_audio_path = temp_dir / f"recorded_audio_{len(recorded_bytes)}.wav"
+                        
+                        try:
+                            with open(recorded_audio_path, "wb") as f:
+                                f.write(recorded_bytes)
+                            
+                            st.success(f"✅ Recording saved! ({len(recorded_bytes)} bytes)")
+                            st.audio(recorded_bytes, format="audio/wav")
+                            st.session_state.recorded_audio_path = str(recorded_audio_path)
+                            st.session_state.recording_status = "Recording saved successfully"
+                        except Exception as e:
+                            st.error(f"Error saving recording: {e}")
+                            logger.error(f"Error saving audio: {e}")
+                    else:
+                        st.info("💡 Click the microphone button above to start recording")
+                        if st.session_state.recorded_audio_path:
+                            st.info(f"📁 Last recording: {Path(st.session_state.recorded_audio_path).name}")
+                else:
+                    # Use streamlit-audiorecorder (preferred)
+                    st.info("💡 Click the microphone button below to start recording")
+                    recorded_bytes = st_audiorec()
+                    
+                    if recorded_bytes:
+                        # Save recorded audio bytes to temp WAV file
+                        temp_dir = Path(tempfile.gettempdir()) / "multimodal_assistant"
+                        temp_dir.mkdir(exist_ok=True)
+                        recorded_audio_path = temp_dir / f"recorded_audio_{len(recorded_bytes)}.wav"
+                        
+                        try:
+                            with open(recorded_audio_path, "wb") as f:
+                                f.write(recorded_bytes)
+                            
+                            st.success(f"✅ Recording saved! ({len(recorded_bytes)} bytes)")
+                            st.audio(recorded_bytes, format="audio/wav")
+                            st.session_state.recorded_audio_path = str(recorded_audio_path)
+                            st.session_state.recording_status = "Recording saved successfully"
+                        except Exception as e:
+                            st.error(f"Error saving recording: {e}")
+                            logger.error(f"Error saving audio: {e}")
+                    else:
+                        if st.session_state.recorded_audio_path:
+                            st.info(f"📁 Last recording: {Path(st.session_state.recorded_audio_path).name}")
+                            st.audio(st.session_state.recorded_audio_path)
+                            
+            except Exception as e:
+                st.error(f"❌ Recording error: {e}")
+                logger.error(f"Audio recording error: {e}")
+                st.info("💡 **Troubleshooting:**\n"
+                        "- Check browser microphone permissions\n"
+                        "- Try Chrome or Edge browser\n"
+                        "- Ensure you're on HTTPS or localhost\n"
+                        "- Try uploading an audio file instead")
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Text input section
+    st.markdown('<div class="upload-section">', unsafe_allow_html=True)
+    st.subheader("✍️ Or Type Your Question")
+    text_input = st.text_area(
+        "Enter your question or prompt here",
+        value=st.session_state.get('text_input', ''),
+        placeholder="e.g., What do you see in this image? Describe the colors and objects.",
+        help="Type your question or prompt. This will be used along with the image (if provided) or as standalone input.",
+        height=100,
+        key="text_input_area"
+    )
+    if text_input:
+        st.info(f"📝 Text input: {text_input[:100]}{'...' if len(text_input) > 100 else ''}")
+        st.session_state.text_input = text_input
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Process button
     if st.button("🚀 Process Inputs", type="primary", use_container_width=True):
-        if not uploaded_image and not uploaded_audio:
-            st.warning("Please upload at least an image or audio file.")
+        # Check if we have any input
+        has_image = uploaded_image is not None
+        has_uploaded_audio = uploaded_audio is not None
+        has_recorded_audio = st.session_state.get("recorded_audio_path") is not None and os.path.exists(st.session_state.get("recorded_audio_path", ""))
+        has_text = text_input and text_input.strip() if text_input else False
+        
+        if not has_image and not has_uploaded_audio and not has_recorded_audio and not has_text:
+            st.warning("⚠️ Please provide at least one input: upload an image, record/upload audio, or type a question.")
         else:
             # Load processor
             if not load_processor():
@@ -195,16 +364,19 @@ def main():
                 audio_path = save_uploaded_file(uploaded_audio, "audio")
                 if audio_path:
                     st.success(f"Audio saved: {uploaded_audio.name}")
-            elif st.session_state.get("recorded_audio_path"):
+            elif st.session_state.get("recorded_audio_path") and os.path.exists(st.session_state.get("recorded_audio_path", "")):
                 audio_path = st.session_state.get("recorded_audio_path")
+                st.info(f"Using recorded audio: {Path(audio_path).name}")
             
             # Process inputs
-            if image_path or audio_path:
+            text_input_value = text_input.strip() if text_input and text_input.strip() else None
+            if image_path or audio_path or text_input_value:
                 with st.spinner("Processing your inputs... This may take a moment."):
                     try:
                         transcribed_text, generated_response, audio_output_path = st.session_state.processor.process_multimodal_input(
                             audio_path=audio_path,
-                            image_path=image_path
+                            image_path=image_path,
+                            text_input=text_input_value
                         )
                         
                         st.session_state.processing_complete = True
@@ -223,11 +395,16 @@ def main():
         
         # Show input image
         if st.session_state.get('image_path') and os.path.exists(st.session_state.image_path):
-            st.image(st.session_state.image_path, caption="Input Image", use_column_width=True)
+            st.image(st.session_state.image_path, caption="Input Image", width="stretch")
+        
+        # Show input text (if provided)
+        if st.session_state.get('text_input') and st.session_state.text_input.strip():
+            st.write("**✍️ Your Text Input:**")
+            st.write(st.session_state.text_input)
         
         # Show transcribed text
         if st.session_state.get('transcribed_text'):
-            st.write("**🎤 What you said:**")
+            st.write("**🎤 What you said (from audio):**")
             st.write(st.session_state.transcribed_text)
         
         # Show generated response
@@ -256,3 +433,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# streamlit run app.py
