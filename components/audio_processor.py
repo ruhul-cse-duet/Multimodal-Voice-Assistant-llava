@@ -1,7 +1,14 @@
 """
 Audio processing component for the Multimodal Voice Assistant
 """
-import whisper
+# Import whisper with a friendly error if the optional dependency is missing.
+# The package name on PyPI is `openai-whisper` even though it is imported as `whisper`.
+try:
+    import whisper
+    _WHISPER_IMPORT_ERROR = None
+except ImportError as exc:  # pragma: no cover - defensive import guard
+    whisper = None
+    _WHISPER_IMPORT_ERROR = exc
 import torch
 import numpy as np
 from gtts import gTTS
@@ -16,7 +23,22 @@ class AudioProcessor:
     
     def __init__(self):
         """Initialize the audio processor with Whisper model"""
-        self.device = MODEL_CONFIG["device"]
+        if whisper is None:
+            raise ImportError(
+                "The `whisper` module is not installed. "
+                "Install it with `pip install openai-whisper` or `pip install -r requirements.txt` "
+                "before running the app."
+            ) from _WHISPER_IMPORT_ERROR
+        
+        # Check CUDA availability and use GPU if available
+        self.cuda_available = torch.cuda.is_available()
+        if self.cuda_available:
+            self.device = "cuda"
+            logger.info(f"Whisper will use GPU: {torch.cuda.get_device_name(0)}")
+        else:
+            self.device = MODEL_CONFIG["device"]  # Fallback to config
+            logger.info("Whisper will use CPU")
+        
         self.whisper_model_size = MODEL_CONFIG["whisper_model_size"]
         self.language = AUDIO_CONFIG["language"]
         self.temp_audio_file = AUDIO_CONFIG["temp_audio_file"]
@@ -28,14 +50,38 @@ class AudioProcessor:
         """Setup the Whisper model for speech recognition"""
         try:
             self.whisper_model = whisper.load_model(self.whisper_model_size, device=self.device)
-            logger.info(f"Whisper model loaded: {self.whisper_model_size}")
+            logger.info(f"✅ Whisper model loaded: {self.whisper_model_size} on {self.device.upper()}")
+            
+            # Verify device placement
+            if self.cuda_available:
+                try:
+                    # Check if model is on GPU
+                    model_device = next(self.whisper_model.encoder.parameters()).device
+                    if model_device.type == "cuda":
+                        logger.info(f"✅ Whisper model confirmed on GPU: {model_device}")
+                    else:
+                        logger.warning(f"⚠️ Whisper model on {model_device}, expected GPU")
+                except:
+                    pass
+            
             logger.info(
                 f"Model is {'multilingual' if self.whisper_model.is_multilingual else 'English-only'} "
                 f"and has {sum(np.prod(p.shape) for p in self.whisper_model.parameters()):,} parameters."
             )
         except Exception as e:
             logger.error(f"Failed to initialize Whisper model: {e}")
-            raise
+            # Try CPU fallback if GPU fails
+            if self.device == "cuda":
+                logger.warning("GPU initialization failed, trying CPU...")
+                try:
+                    self.device = "cpu"
+                    self.whisper_model = whisper.load_model(self.whisper_model_size, device=self.device)
+                    logger.info(f"Whisper model loaded on CPU (fallback)")
+                except Exception as e2:
+                    logger.error(f"CPU fallback also failed: {e2}")
+                    raise
+            else:
+                raise
     
     def speech_to_text(self, audio_path: str) -> str:
         """
