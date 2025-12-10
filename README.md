@@ -78,5 +78,15 @@ multimodal-voice-assistant/
 - CUDA out of memory: use CPU (`CUDA_AVAILABLE=false`) or a smaller model.
 - Audio not saved/played: verify FFmpeg install and file permissions under `temp/`.
 
+## 📧 Contact
+[Md Ruhul Amin](https://www.linkedin.com/in/ruhul-duet-cse/); \
+Email: ruhul.cse.duet@gmail.com
+
+For questions or issues, please open an issue on GitHub.
+
+---
+
+The first run downloads embedding weights; keep an internet connection for that step.
+
 ## License
 MIT
