@@ -1,190 +1,82 @@
 # 🎤 Multimodal Voice Assistant
 
-A powerful Streamlit application that combines image analysis and voice interaction using state-of-the-art AI models. Upload an image, ask questions via voice, and get intelligent spoken responses!
+Streamlit app that combines LLaVA for image understanding, Whisper for speech-to-text, and gTTS for text-to-speech. Upload an image, speak a question, and get a spoken AI response.
 
-## ✨ Features
+## Requirements
+- Python 3.12 (tested on 3.12.12)
+- FFmpeg available on `PATH` (required by Whisper/pydub)
+- (Optional) CUDA-capable GPU for faster inference
 
-- **🖼️ Image Analysis**: Powered by LLaVA (Large Language and Vision Assistant) for detailed image understanding
-- **🎤 Speech-to-Text**: Whisper model for accurate speech recognition in multiple languages
-- **🔊 Text-to-Speech**: Natural-sounding voice responses using Google Text-to-Speech
-- **🤖 Multimodal AI**: Combines visual and audio understanding for intelligent interactions
-- **📱 Modern UI**: Clean, responsive Streamlit interface
-- **⚡ Modular Design**: Well-organized codebase ready for GitHub deployment
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.8 or higher
-- CUDA-compatible GPU (recommended for better performance)
-- FFmpeg (for audio processing)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <your-repo-url>
-   cd multimodal-voice-assistant
-   ```
-
-2. **Create a virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Download NLTK data**
-   ```bash
-   python -c "import nltk; nltk.download('punkt')"
-   ```
-
-5. **Run the application**
-   ```bash
-   streamlit run app.py
-   ```
-
-6. **Open your browser**
-   Navigate to `http://localhost:8501`
-
-## 📁 Project Structure
-
-```
-multimodal-voice-assistant/
-├── app.py                          # Main Streamlit application
-├── requirements.txt                # Python dependencies
-├── README.md                      # This file
-├── .gitignore                     # Git ignore rules
-├── config/
-│   └── settings.py               # Configuration settings
-├── components/
-│   ├── image_processor.py        # Image processing with LLaVA
-│   ├── audio_processor.py        # Audio processing with Whisper
-│   └── multimodal_processor.py   # Combined multimodal processing
-├── utils/
-│   └── logger.py                 # Logging utilities
-├── models/                       # Model cache directory
-├── logs/                         # Application logs
-└── temp/                         # Temporary files
+## Quick Start (Windows / Python 3.12)
+1) Create and activate a virtual environment
+```bash
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-## 🛠️ Usage
+2) Install dependencies (CPU default)
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-1. **Upload an Image**: Choose any image file (JPG, PNG, etc.)
-2. **Record or Upload Audio**: Ask questions about the image via voice
-3. **Get AI Response**: The system will analyze both inputs and provide a spoken response
+3) (Optional, GPU + quantization) Install a CUDA build of PyTorch and bitsandbytes manually, e.g.:
+```bash
+pip install torch==2.3.1+cu121 torchvision==0.18.1+cu121 torchaudio==2.3.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+pip install bitsandbytes
+```
 
-### Example Interactions
+4) Download required NLTK data
+```bash
+python -c "import nltk; nltk.download('punkt')"
+```
 
-- "What colors are predominant in this image?"
-- "Describe what you see in this photograph"
-- "Is this a painting or a photograph?"
-- "What objects can you identify in this scene?"
-
-## ⚙️ Configuration
-
-Edit `config/settings.py` to customize:
-
-- Model configurations (LLaVA model, Whisper size)
-- Audio settings (sample rate, language)
-- UI preferences
-- Logging options
-
-## 🔧 Technical Details
-
-### Models Used
-
-- **LLaVA-1.5-7B**: For image understanding and text generation
-- **Whisper Medium**: For speech-to-text conversion
-- **Google TTS**: For text-to-speech synthesis
-
-### Performance Notes
-
-- First run will download models (~1.5GB for Whisper, ~13GB for LLaVA)
-- GPU acceleration recommended for faster processing
-- Models are cached locally for subsequent runs
-
-## 🚀 Deployment
-
-### Local Development
+5) Run the app
 ```bash
 streamlit run app.py
 ```
+Open http://localhost:8501 in your browser.
 
-### Production Deployment
-1. **Streamlit Cloud**: Connect your GitHub repo to Streamlit Cloud
-2. **Docker**: Use the provided Dockerfile for containerized deployment
-3. **Heroku**: Deploy using the included Procfile
-4. **AWS/GCP/Azure**: Deploy using cloud-specific configurations
+## Project Structure
+```
+multimodal-voice-assistant/
+├── app.py                      # Streamlit entry point
+├── requirements.txt            # Python dependencies
+├── config/
+│   └── settings.py             # Model + UI configuration
+├── components/
+│   ├── image_processor.py      # LLaVA image-to-text pipeline
+│   ├── audio_processor.py      # Whisper STT + gTTS TTS
+│   └── multimodal_processor.py # Orchestration of image/audio flows
+├── utils/
+│   └── logger.py               # Logging utilities + history
+├── models/                     # Model cache (created at runtime)
+├── logs/                       # Application logs
+└── temp/                       # Temporary files
+```
 
-### GitHub Setup
-1. Initialize git repository
-2. Add all files: `git add .`
-3. Commit: `git commit -m "Initial commit"`
-4. Push to GitHub: `git push origin main`
+## Configuration
+`config/settings.py`
+- `MODEL_CONFIG`: LLaVA model id, Whisper size, device preference
+- `AUDIO_CONFIG`: language, sample rate, temp file names
+- `UI_CONFIG`: Streamlit page settings
 
-## 📝 API Reference
+## How It Works
+1. User uploads an image and records/uploads audio in the UI.
+2. `AudioProcessor` runs Whisper to transcribe speech.
+3. `ImageProcessor` runs LLaVA, optionally using the transcript as context.
+4. Response is converted to speech with gTTS and played back.
 
-### ImageProcessor
-- `process_image(image_path, input_text)`: Process image with optional text prompt
-- `is_image_file(file_path)`: Validate image file
+## Notes & Tips
+- First run will download models (can be several GB). Cached under `models/`.
+- On CPU, image generation with LLaVA will be slow; consider smaller models if needed.
+- If Whisper is missing you will see a clear error; install via `pip install openai-whisper` (already in requirements).
+- Ensure FFmpeg is installed and on PATH for audio processing.
 
-### AudioProcessor
-- `speech_to_text(audio_path)`: Convert speech to text
-- `text_to_speech(text, output_path)`: Convert text to speech
-- `is_audio_file(file_path)`: Validate audio file
+## Troubleshooting
+- Install errors on Windows for bitsandbytes: omit it (CPU path) or install a wheel compatible with your CUDA setup.
+- CUDA out of memory: use CPU (`CUDA_AVAILABLE=false`) or a smaller model.
+- Audio not saved/played: verify FFmpeg install and file permissions under `temp/`.
 
-### MultimodalProcessor
-- `process_multimodal_input(audio_path, image_path)`: Process both inputs
-- `process_image_only(image_path, prompt)`: Process image only
-- `process_audio_only(audio_path)`: Process audio only
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **CUDA out of memory**: Reduce model size or use CPU
-2. **Model download fails**: Check internet connection and Hugging Face access
-3. **Audio not playing**: Ensure FFmpeg is installed
-4. **Import errors**: Verify all dependencies are installed
-
-### Logs
-
-Check the `logs/` directory for detailed application logs and error messages.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes
-4. Commit: `git commit -m "Add feature"`
-5. Push: `git push origin feature-name`
-6. Create a Pull Request
-
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## 🙏 Acknowledgments
-
-- [LLaVA](https://github.com/haotian-liu/LLaVA) for vision-language understanding
-- [Whisper](https://github.com/openai/whisper) for speech recognition
-- [Streamlit](https://streamlit.io/) for the web framework
-- [Hugging Face](https://huggingface.co/) for model hosting
-
-## 📞 Support
-
-If you encounter any issues or have questions:
-
-1. Check the [Issues](https://github.com/ruhul-cse-duet/Multimodal-Voice-Assistant-llava/issues) page
-2. Create a new issue with detailed description
-3. Include logs and system information
-
----
-
-**Happy coding! 🚀 Upload this to GitHub and share your amazing multimodal AI assistant with the world!**
-# Multimodal-Voice-Assistant-llava
+## License
+MIT
