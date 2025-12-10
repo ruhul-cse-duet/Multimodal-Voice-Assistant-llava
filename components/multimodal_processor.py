@@ -21,20 +21,23 @@ class MultimodalProcessor:
     def process_multimodal_input(
         self, 
         audio_path: Optional[str] = None, 
-        image_path: Optional[str] = None
+        image_path: Optional[str] = None,
+        text_input: Optional[str] = None
     ) -> Tuple[str, str, str]:
         """
-        Process both audio and image inputs
+        Process audio, image, and/or text inputs
         
         Args:
             audio_path: Path to audio file (optional)
             image_path: Path to image file (optional)
+            text_input: Text prompt/question (optional)
             
         Returns:
             Tuple of (transcribed_text, generated_response, audio_output_path)
         """
         try:
             transcribed_text = ""
+            input_prompt = ""
             generated_response = ""
             audio_output_path = ""
             
@@ -42,19 +45,26 @@ class MultimodalProcessor:
             if audio_path and Path(audio_path).exists():
                 transcribed_text = self.audio_processor.speech_to_text(audio_path)
                 write_history(f"Audio processed: {transcribed_text}")
-            else:
-                logger.info("No audio file provided or file doesn't exist")
+                input_prompt = transcribed_text
+            
+            # Use text input if provided (takes precedence over transcribed audio)
+            if text_input and text_input.strip():
+                input_prompt = text_input.strip()
+                write_history(f"Text input provided: {input_prompt}")
             
             # Process image if provided
             if image_path and Path(image_path).exists():
-                # Use transcribed text as prompt for image analysis
-                prompt = transcribed_text if transcribed_text else None
+                # Use input_prompt (from text or audio) as prompt for image analysis
+                prompt = input_prompt if input_prompt else None
                 generated_response = self.image_processor.process_image(image_path, prompt)
                 write_history(f"Image processed with response: {generated_response}")
             else:
                 logger.info("No image file provided or file doesn't exist")
-                if transcribed_text:
-                    # If we have audio but no image, just return the transcribed text
+                if input_prompt:
+                    # If we have text/audio but no image, provide a simple response
+                    generated_response = f"I understand: {input_prompt}. However, I need an image to provide a detailed analysis."
+                elif transcribed_text:
+                    # Fallback for audio only
                     generated_response = f"I heard you say: {transcribed_text}"
             
             # Generate audio response if we have text to speak
